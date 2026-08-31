@@ -7,6 +7,7 @@ on:
       - main
     paths:
       - '.github/workflows/build-freetube-ios.yml'
+      - 'patches/**'
       - 'README.md'
 
 permissions:
@@ -14,7 +15,7 @@ permissions:
 
 jobs:
   build-ios:
-    name: Build Invidious iOS IPA
+    name: Build Invidious/Piped iOS IPA
     runs-on: macos-26
     timeout-minutes: 60
 
@@ -27,6 +28,12 @@ jobs:
           git clone --depth 1 --branch v1.5.2-257 https://github.com/yattee/yattee.git upstream
           cd upstream
           echo "UPSTREAM_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+
+      - name: Apply FreeTube compatibility patches
+        run: |
+          cp patches/InstanceForm.swift upstream/Shared/Settings/InstanceForm.swift
+          cp patches/LocationsSettings.swift upstream/Shared/Settings/LocationsSettings.swift
+          echo 'Applied manual backend selector, validation bypass, and quick Piped setup.'
 
       - name: Show Xcode version
         run: xcodebuild -version
@@ -92,8 +99,10 @@ jobs:
       - name: Write build metadata
         run: |
           cat > "$RUNNER_TEMP/build-info.txt" <<EOF
-          App: FreeTube iOS (Yattee 1.x)
+          App: FreeTube iOS (Yattee 1.x patched)
           Backend support: Invidious / Piped
+          Location validation: legacy strict check removed
+          Quick setup: Piped Private Coffee / Wireway
           Upstream: yattee/yattee
           Upstream branch: v1.5.2-257
           Upstream commit: $UPSTREAM_SHA
@@ -104,7 +113,7 @@ jobs:
       - name: Upload IPA artifact
         uses: actions/upload-artifact@v4
         with:
-          name: FreeTube-Invidious-iOS-unsigned
+          name: FreeTube-Invidious-Piped-patched-unsigned
           path: |
             ${{ runner.temp }}/FreeTube.ipa
             ${{ runner.temp }}/build-info.txt
@@ -116,7 +125,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: FreeTube-Invidious-build-log
+          name: FreeTube-Invidious-Piped-build-log
           path: ${{ runner.temp }}/xcodebuild.log
           if-no-files-found: ignore
           retention-days: 7
