@@ -15,7 +15,7 @@ permissions:
 jobs:
   build-ios:
     name: Build Invidious iOS IPA
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 60
 
     steps:
@@ -98,7 +98,7 @@ jobs:
           Upstream branch: v1.5.2-257
           Upstream commit: $UPSTREAM_SHA
           Build mode: unsigned / sideload
-          Runner: macos-15
+          Runner: macos-26 / Xcode 26
           EOF
 
       - name: Upload IPA artifact
