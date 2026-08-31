@@ -14,17 +14,17 @@ permissions:
 
 jobs:
   build-ios:
-    name: Build unsigned iOS IPA
-    runs-on: macos-26
+    name: Build Invidious iOS IPA
+    runs-on: macos-15
     timeout-minutes: 60
 
     steps:
       - name: Checkout builder repository
         uses: actions/checkout@v4
 
-      - name: Clone upstream Yattee
+      - name: Clone Yattee 1.x with Invidious support
         run: |
-          git clone --depth 1 https://github.com/yattee/yattee.git upstream
+          git clone --depth 1 --branch v1.5.2-257 https://github.com/yattee/yattee.git upstream
           cd upstream
           echo "UPSTREAM_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
 
@@ -37,7 +37,7 @@ jobs:
           xcodebuild \
             -resolvePackageDependencies \
             -project Yattee.xcodeproj \
-            -scheme Yattee
+            -scheme 'Yattee (iOS)'
 
       - name: Build iOS app without code signing
         working-directory: upstream
@@ -45,7 +45,7 @@ jobs:
           set -o pipefail
           xcodebuild \
             -project Yattee.xcodeproj \
-            -scheme Yattee \
+            -scheme 'Yattee (iOS)' \
             -configuration Release \
             -sdk iphoneos \
             -destination 'generic/platform=iOS' \
@@ -57,12 +57,11 @@ jobs:
             build | tee "$RUNNER_TEMP/xcodebuild.log"
 
       - name: Locate built app
-        id: locate
         run: |
-          APP_PATH=$(find "$RUNNER_TEMP/FreeTubeDerivedData/Build/Products" -maxdepth 3 -type d -name 'Yattee.app' | head -n 1)
+          APP_PATH=$(find "$RUNNER_TEMP/FreeTubeDerivedData/Build/Products" -maxdepth 4 -type d -name 'Yattee.app' | head -n 1)
           if [ -z "$APP_PATH" ]; then
             echo 'Yattee.app was not found after build.'
-            find "$RUNNER_TEMP/FreeTubeDerivedData/Build/Products" -maxdepth 4 -print || true
+            find "$RUNNER_TEMP/FreeTubeDerivedData/Build/Products" -maxdepth 5 -print || true
             exit 1
           fi
           echo "APP_PATH=$APP_PATH" >> "$GITHUB_ENV"
@@ -73,12 +72,13 @@ jobs:
           /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName FreeTube" "$APP_PATH/Info.plist" 2>/dev/null || \
           /usr/libexec/PlistBuddy -c "Add :CFBundleDisplayName string FreeTube" "$APP_PATH/Info.plist"
 
-          # Share extensions consume another App ID when using free sideloading.
-          # The core video client does not require the extension, so strip it.
+          # SideStore/AltStore can re-sign the main app. Strip extensions so a
+          # free Apple ID does not need additional App IDs for non-core targets.
           rm -rf "$APP_PATH/PlugIns"
 
           echo "Display name: $(/usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$APP_PATH/Info.plist")"
           echo "Bundle ID: $(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP_PATH/Info.plist")"
+          echo "Minimum iOS: $(/usr/libexec/PlistBuddy -c 'Print :MinimumOSVersion' "$APP_PATH/Info.plist")"
 
       - name: Package unsigned IPA
         run: |
@@ -92,17 +92,19 @@ jobs:
       - name: Write build metadata
         run: |
           cat > "$RUNNER_TEMP/build-info.txt" <<EOF
-          App: FreeTube iOS
+          App: FreeTube iOS (Yattee 1.x)
+          Backend support: Invidious / Piped
           Upstream: yattee/yattee
+          Upstream branch: v1.5.2-257
           Upstream commit: $UPSTREAM_SHA
           Build mode: unsigned / sideload
-          Runner: macos-26
+          Runner: macos-15
           EOF
 
       - name: Upload IPA artifact
         uses: actions/upload-artifact@v4
         with:
-          name: FreeTube-iOS-unsigned
+          name: FreeTube-Invidious-iOS-unsigned
           path: |
             ${{ runner.temp }}/FreeTube.ipa
             ${{ runner.temp }}/build-info.txt
@@ -114,7 +116,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: FreeTube-build-log
+          name: FreeTube-Invidious-build-log
           path: ${{ runner.temp }}/xcodebuild.log
           if-no-files-found: ignore
           retention-days: 7
