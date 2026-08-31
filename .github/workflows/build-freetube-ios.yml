@@ -1,0 +1,120 @@
+name: Build FreeTube iOS IPA
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/build-freetube-ios.yml'
+      - 'README.md'
+
+permissions:
+  contents: read
+
+jobs:
+  build-ios:
+    name: Build unsigned iOS IPA
+    runs-on: macos-26
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout builder repository
+        uses: actions/checkout@v4
+
+      - name: Clone upstream Yattee
+        run: |
+          git clone --depth 1 https://github.com/yattee/yattee.git upstream
+          cd upstream
+          echo "UPSTREAM_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Resolve Swift packages
+        working-directory: upstream
+        run: |
+          xcodebuild \
+            -resolvePackageDependencies \
+            -project Yattee.xcodeproj \
+            -scheme Yattee
+
+      - name: Build iOS app without code signing
+        working-directory: upstream
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project Yattee.xcodeproj \
+            -scheme Yattee \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$RUNNER_TEMP/FreeTubeDerivedData" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY='' \
+            DEVELOPMENT_TEAM='' \
+            build | tee "$RUNNER_TEMP/xcodebuild.log"
+
+      - name: Locate built app
+        id: locate
+        run: |
+          APP_PATH=$(find "$RUNNER_TEMP/FreeTubeDerivedData/Build/Products" -maxdepth 3 -type d -name 'Yattee.app' | head -n 1)
+          if [ -z "$APP_PATH" ]; then
+            echo 'Yattee.app was not found after build.'
+            find "$RUNNER_TEMP/FreeTubeDerivedData/Build/Products" -maxdepth 4 -print || true
+            exit 1
+          fi
+          echo "APP_PATH=$APP_PATH" >> "$GITHUB_ENV"
+          echo "Built app: $APP_PATH"
+
+      - name: Prepare sideload-friendly FreeTube app
+        run: |
+          /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName FreeTube" "$APP_PATH/Info.plist" 2>/dev/null || \
+          /usr/libexec/PlistBuddy -c "Add :CFBundleDisplayName string FreeTube" "$APP_PATH/Info.plist"
+
+          # Share extensions consume another App ID when using free sideloading.
+          # The core video client does not require the extension, so strip it.
+          rm -rf "$APP_PATH/PlugIns"
+
+          echo "Display name: $(/usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$APP_PATH/Info.plist")"
+          echo "Bundle ID: $(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP_PATH/Info.plist")"
+
+      - name: Package unsigned IPA
+        run: |
+          rm -rf "$RUNNER_TEMP/Payload" "$RUNNER_TEMP/FreeTube.ipa"
+          mkdir -p "$RUNNER_TEMP/Payload"
+          cp -R "$APP_PATH" "$RUNNER_TEMP/Payload/FreeTube.app"
+          cd "$RUNNER_TEMP"
+          /usr/bin/zip -qry FreeTube.ipa Payload
+          ls -lh FreeTube.ipa
+
+      - name: Write build metadata
+        run: |
+          cat > "$RUNNER_TEMP/build-info.txt" <<EOF
+          App: FreeTube iOS
+          Upstream: yattee/yattee
+          Upstream commit: $UPSTREAM_SHA
+          Build mode: unsigned / sideload
+          Runner: macos-26
+          EOF
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: FreeTube-iOS-unsigned
+          path: |
+            ${{ runner.temp }}/FreeTube.ipa
+            ${{ runner.temp }}/build-info.txt
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: FreeTube-build-log
+          path: ${{ runner.temp }}/xcodebuild.log
+          if-no-files-found: ignore
+          retention-days: 7
